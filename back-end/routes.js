@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const Ticket = require("./schema"); // Import the Ticket schema
 const cors = require("cors");
-const app = express();
+const redisClient = require("./redisClient");
 
 // Middleware setup
 router.use(express.json()); // Parse incoming JSON data
@@ -19,6 +19,9 @@ router.post("/booking", async (req, res) => {
     // Save the Ticket instance to the database
     const saved = await myData.save();
 
+    // Update Redis cache with the new booking data
+    await redisClient.set('lastBooking', JSON.stringify(myData));
+
     // Respond with success message and the saved data
     res.status(200).json({ data: myData, message: "Booking successful!" });
   } catch (error) {
@@ -33,15 +36,26 @@ router.post("/booking", async (req, res) => {
 // Endpoint for getting the last booking details from the database and sending it to the frontend.
 router.get("/booking", async (req, res) => {
   try {
-    // Retrieve the last booking by sorting in descending order and limiting to 1 result
-    const myData = await Ticket.find().sort({ _id: -1 }).limit(1);
+    // Check Redis cache for last booking data
+    const cachedData = await redisClient.get('lastBooking');
 
-    if (myData.length === 0) {
-      // No booking found, respond with appropriate message
-      res.status(200).json({ data: null, message: "No previous booking found!" });
+    if (cachedData) {
+      // Return cached data if available
+      res.status(200).json({ data: JSON.parse(cachedData), message: "Data from cache" });
     } else {
-      // Respond with the last booking details
-      res.status(200).json({ data: myData[0] });
+      // Retrieve the last booking by sorting in descending order and limiting to 1 result
+      const myData = await Ticket.find().sort({ _id: -1 }).limit(1);
+
+      if (myData.length === 0) {
+        // No booking found, respond with appropriate message
+        res.status(200).json({ data: null, message: "No previous booking found!" });
+      } else {
+        // Cache the retrieved data in Redis
+        await redisClient.set('lastBooking', JSON.stringify(myData[0]));
+
+        // Respond with the last booking details
+        res.status(200).json({ data: myData[0] });
+      }
     }
   } catch (error) {
     // Handle errors and respond with an error message
